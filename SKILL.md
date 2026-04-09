@@ -1,6 +1,6 @@
 ---
 name: genomic-variant-research
-description: Systematic computational analysis of genetic variants — from coordinates to ACMG classification. Chains 36 tools into a reproducible workflow for any gene/variant.
+description: Systematic computational analysis of genetic variants — from coordinates to ACMG classification. 143 tools documented, 36 verified with API examples, 8-step reproducible workflow for any gene/variant.
 tags: [genomics, variant-classification, acmg, dna, protein, gene-therapy]
 triggers:
   - variant analysis
@@ -185,12 +185,22 @@ Variant in ordered region → missense more likely damaging.
 7. **gnomAD coverage** — low coverage ≠ absent variant
 8. **AlphaGenome** — no inner ear tissue in training data
 9. **CADD direct API returns "Not found"** — use Ensembl VEP with `?CADD=1` parameter instead
-10. **UniProt ID verification** — always verify gene→UniProt mapping via search API, never from memory
-11. **AlphaFold confidence JSON** — v4 may 404, try v6
-12. **gnomAD constraint for recessive genes** — low pLI is EXPECTED. High missense Z-score is the signal.
-13. **AlphaMissense heatmap** — download full CSV to find regional hotspots via sliding window.
-14. **SpliceAI API times out** — web interface works, CLI pip package has broken deps (pkg_resources). Use Ensembl VEP with SpliceAI plugin or web lookup.
+10. **UniProt ID verification** — always verify gene→UniProt mapping via search API, never from memory. We wrote Q7RTU1 from memory when the correct ID was Q7RTU9 — caught only by API verification.
+11. **AlphaFold confidence JSON** — v4 may 404, try v6: `AF-{UNIPROT}-F1-confidence_v6.json`
+12. **gnomAD constraint for recessive genes** — low pLI is EXPECTED (one broken copy tolerated). High missense Z-score is the real signal (e.g., STRC: pLI=0.14 but missZ=7.62).
+13. **AlphaMissense heatmap** — download full CSV (`AF-{UNIPROT}-F1-aa-substitutions.csv`) to find regional hotspots via sliding window analysis. Don't just check the single variant.
+14. **SpliceAI API times out** — web interface works, CLI pip package has broken deps (pkg_resources). Use Ensembl VEP with SpliceAI plugin or web lookup only.
 15. **OMIM/VarSome APIs need approval** — registration doesn't give immediate access. Use web interfaces + get scores via VEP/gnomAD/AlphaFold direct APIs instead.
+16. **Brain→Site sync** — if maintaining a research site, write a build script that generates pages from knowledge base notes (single source of truth). Don't maintain content in two places.
+## Documentation Workflow
+
+When documenting tools in a knowledge base (Obsidian, etc.):
+
+1. **Each tool = one atomic note** with sections: What It Does, How to Use (API examples), Verified Status, Research Usage (specific results), Results (what you actually found), Next Steps
+2. **Test every API** — don't just document, actually run it for your variant. Record exact results.
+3. **"Untapped Potential" is debt** — either do it and rename to "Results", or rename to "Next Steps" with honest assessment of feasibility.
+4. **Single source of truth** — if publishing to a website, write a sync script that generates pages FROM notes. Never maintain content in two places. See `scripts/sync-tools-from-brain.py` pattern.
+5. **Verify coordinates obsessively** — run Ensembl VEP first, use those coordinates everywhere. UniProt IDs, genomic positions, and strand all need API verification, not memory.
 
 ## Reference: STRC E1659A (Worked Example)
 
