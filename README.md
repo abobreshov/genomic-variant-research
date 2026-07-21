@@ -1,5 +1,13 @@
 # Genomic Variant Research Skill
 
+## MISHA mission
+
+My son Misha has rare genetic hearing loss. I am building an independent AI research lab for rare diseases. Each result that an outside expert can inspect is one step toward a research workflow that could help millions of families.
+
+One rare disease is rare. Rare diseases together are not.
+
+This repository turns the process our family had to learn into a reusable, auditable workflow for genetic variant analysis. A specialist should review every output.
+
 An AI agent skill for systematic computational analysis of human genetic variants. Feed it a gene + variant → get a full ACMG evidence package using 30+ free bioinformatics tools.
 
 Built for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and compatible AI agents.
