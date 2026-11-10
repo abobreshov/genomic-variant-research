@@ -17,6 +17,8 @@
 #   - renamed
 #   - pinned polite-http==0.1.3
 #   - --output may be a bare filename (os.makedirs no longer gets an empty path)
+#   - requests `filters` on the exome, genome and joint callsets and `populations` on joint, so a frequency
+#     can be checked for QC flags and the population's allele number
 
 """Fetches variant frequency from gnomAD."""
 
@@ -91,6 +93,7 @@ def get_variant_frequency(
         ac
         an
         af
+        filters
         homozygote_count
         hemizygote_count
         faf95 {
@@ -113,6 +116,7 @@ def get_variant_frequency(
         ac
         an
         af
+        filters
         homozygote_count
         hemizygote_count
         faf95 {
@@ -134,6 +138,7 @@ def get_variant_frequency(
       joint {
         ac
         an
+        filters
         homozygote_count
         hemizygote_count
         faf95 {
@@ -143,6 +148,11 @@ def get_variant_frequency(
         faf99 {
           popmax
           popmax_population
+        }
+        populations {
+          id
+          ac
+          an
         }
       }
     }

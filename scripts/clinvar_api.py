@@ -15,6 +15,8 @@
 # Modified for genomic-variant-research from skills/clinvar_database/scripts/clinvar_api.py in
 # https://github.com/google-deepmind/science-skills at commit 370f8f33e5bb27dffe8289ea9bdec436686613ce:
 #   - pinned polite-http==0.1.3 and python-dotenv==1.2.4
+#   - error messages name the endpoint and never the request URL, which carries the API key and email
+#   - reads only the NCBI settings from ~/.env (NCBI_API_KEY, NCBI_TOOL, NCBI_EMAIL, USER_EMAIL)
 
 """A Python client for querying the NCBI ClinVar database via E-utilities."""
 
@@ -109,14 +111,24 @@ class ClinVarClient:
             ' https://www.ncbi.nlm.nih.gov/clinvar/docs/api_http/ for'
             ' instructions on how to obtain one. The user will need to set the'
             ' NCBI_API_KEY environment variable and advise the agent to retry.'
-        ) from exc
+        ) from None
+      # The error text carries the request URL, which holds the API key and email: report the endpoint only.
       raise RuntimeError(
-          f'HTTP {exc.status_code} error from NCBI E-utilities: {exc}'
-      ) from exc
+          f'HTTP {exc.status_code} error from NCBI E-utilities ({endpoint})'
+      ) from None
     except Exception as exc:
       raise RuntimeError(
-          f'Failed to fetch data from NCBI E-utilities: {exc}'
-      ) from exc
+          f'Failed to fetch data from NCBI E-utilities ({endpoint}):'
+          f' {self._redact(str(exc))}'
+      ) from None
+
+  def _redact(self, text: str) -> str:
+    """Removes the API key and email, plain or URL-encoded, from an error message."""
+    for secret in (self.api_key, self.email):
+      if secret:
+        for form in {secret, urllib.parse.quote(secret), urllib.parse.quote_plus(secret)}:
+          text = text.replace(form, '***')
+    return text
 
   def _parse_json(self, content: bytes) -> dict[str, Any]:
     """Decodes and parses a JSON response from NCBI E-utilities."""
@@ -648,8 +660,16 @@ def write_output(data, output_file):
     sys.exit(1)
 
 
+NCBI_SETTINGS = ('NCBI_API_KEY', 'NCBI_TOOL', 'NCBI_EMAIL', 'USER_EMAIL')
+
+
 def main():
-  dotenv.load_dotenv(os.path.expanduser('~/.env'))
+  # Take only the NCBI settings from ~/.env; other keys there (an AlphaGenome key, say) stay out of this process.
+  # An exported variable still wins.
+  stored = dotenv.dotenv_values(os.path.expanduser('~/.env'))
+  for name in NCBI_SETTINGS:
+    if stored.get(name) and not os.environ.get(name):
+      os.environ[name] = stored[name]
   parser = argparse.ArgumentParser(
       description='ClinVar Database API Wrapper Script'
   )

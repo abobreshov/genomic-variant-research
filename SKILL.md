@@ -34,7 +34,7 @@ Copy this and tick it off:
 ```text
 - [ ] 1 Coordinates: vcf_string, strand, MANE transcript, protein position from VEP; residue matches UniProt
 - [ ] 2 PP3/BP4: one predictor's level, tool named
-- [ ] 3 Frequency: gnomAD AF and joint FAF, or absence plus the coverage and paralog check; ClinVar entries with review status
+- [ ] 3 Frequency: gnomAD faf95.popmax from an unfiltered callset, or absence plus the coverage and paralog check; ClinVar entries with review status
 - [ ] 4 Structure: pLDDT at the position
 - [ ] 5 Splicing: SpliceAI delta scores; AVI score as context when a key is set
 - [ ] 6 Conservation: phyloP at the base; aligned protein column across species
@@ -114,11 +114,13 @@ For a recessive gene a low pLI is expected, because one broken copy is tolerated
 ClinVar: look the variant up by its exact name on the MANE RefSeq transcript from step 1, then read the classification and review status:
 
 ```bash
-uv run "${CLAUDE_SKILL_DIR}/scripts/clinvar_api.py" search --query '"NM_ID.V:c.CHANGE"[vname]' --output clinvar_ids.json
+uv run "${CLAUDE_SKILL_DIR}/scripts/clinvar_api.py" search --query '"NM_ID.V:c.CHANGE"[Variant Name]' --output clinvar_ids.json
 uv run "${CLAUDE_SKILL_DIR}/scripts/clinvar_api.py" summary --variant_ids ID ... --output clinvar_summary.json
 ```
 
-If the name finds nothing, search a window of about ±5 bases (`'CHR[chr] AND START:END[chrpos38]'`, ascending), because indel positions differ between left-aligned VCF and right-aligned HGVS. Neighbouring variants appear in that window, so keep only an entry whose title names this variant's c. change; with none, the variant is absent from ClinVar. Record the review status with the classification, because a single submitter's claim weighs less than an expert panel's.
+Keep the double quotes and the `[Variant Name]` field: unquoted, or with the `[vname]` alias, E-utilities searches all fields and can return another variant's record.
+
+If the name finds nothing, search a window around the position (`'CHROM[chr] AND START:END[chrpos38]'`, ascending), because indel positions differ between left-aligned VCF and right-aligned HGVS. `CHROM` is VEP's `seq_region_name` with no `chr` prefix: `chr15[chr]` matches nothing. Use ±5 bases for a substitution and ±25 for an indel. Neighbouring variants appear in the window, so keep only an entry whose title has the same c. change after dropping any bases written after `del` or `dup` (`c.68_69delAG` is `c.68_69del`); the transcript version in the title may differ. With no such entry, record "not found in ClinVar by name or window", not "absent": an entry described only on another transcript, or shifted further along a repeat, is missed. Record the review status with the classification, because a single submitter's claim weighs less than an expert panel's.
 
 ## Step 4: Protein structure
 
@@ -130,10 +132,10 @@ AlphaFold 3 (alphafoldserver.com) can fold the wild type and the mutant, but it 
 
 SpliceAI comes from the VEP call in step 1. Outside the canonical ±1,2 splice positions, a delta score of 0.2 or more supports PP3 for a splicing effect and 0.1 or less supports BP4 (ClinGen SVI splicing guidance, Walker 2023). Do not apply PP3 for both a missense and a splicing effect of the same variant. If VEP has no SpliceAI score, use https://spliceailookup.broadinstitute.org/ (its pip package fails to install on current Python).
 
-AlphaGenome, optional; its training data has no inner-ear tissue. The precomputed AlphaGenome Variant Impact (AVI) score (1-based GRCh38, forward-strand alleles):
+AlphaGenome, optional; its training data has no inner-ear tissue. The precomputed AlphaGenome Variant Impact (AVI) score, with CHROM, POS, REF and ALT taken from `vcf_string` (step 1), never from the transcript-strand alleles:
 
 ```bash
-uv run "${CLAUDE_SKILL_DIR}/scripts/alphagenome_avi.py" query "chrCHR:POS:REF>ALT" --format json --output avi.json
+uv run "${CLAUDE_SKILL_DIR}/scripts/alphagenome_avi.py" query "chrCHROM:POS:REF>ALT" --format json --output avi.json
 ```
 
 Report `avi_phred`, `top_percentile` and `fi_MERGED_SPLICING` as context. AVI is not calibrated for ACMG, so it never sets PP3 or BP4; for a missense variant it mostly restates AlphaMissense. For track-level predictions, score the variant live:
@@ -158,8 +160,10 @@ df = variant_scorers.tidy_scores(scores)
 Base-level conservation from the UCSC 100-vertebrate alignment, with no alignment to build (1-based GRCh38 position):
 
 ```bash
-uv run "${CLAUDE_SKILL_DIR}/scripts/ucsc_conservation.py" --coordinates chrCHR:POS --output conservation.json
+uv run "${CLAUDE_SKILL_DIR}/scripts/ucsc_conservation.py" --coordinates chrCHROM:POS --output conservation.json
 ```
+
+The file is keyed by the coordinate you passed: read `["chr15:43600551"].tracks.phyloP100way[0].value` and `.tracks.phastCons100way[0].value`. Its `coordinate`, `start` and `end` are UCSC's 0-based half-open form (`chr15:43600551` comes back as `chr15:43600550-43600551`); they name the same base, not the one before it.
 
 Report `phyloP100way` and `phastCons100way` as context; like AVI, they never set PP3 or BP4. In a segmental duplication such as STRC's, the alignment can mix the copies, so read it with the paralog caveat from step 3.
 
