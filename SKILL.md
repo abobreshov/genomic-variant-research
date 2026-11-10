@@ -31,7 +31,7 @@ Steps 1-4, 7 and 8 need only `curl` and `python3` with network access. In additi
 Copy this and tick it off:
 
 ```text
-- [ ] 1 Coordinates: chr, pos, strand, MANE transcript, protein position from VEP; residue matches UniProt
+- [ ] 1 Coordinates: vcf_string, strand, MANE transcript, protein position from VEP; residue matches UniProt
 - [ ] 2 PP3/BP4: one predictor's level, tool named
 - [ ] 3 Frequency: gnomAD AF, or absence plus the coverage and paralog check; ClinVar entries
 - [ ] 4 Structure: pLDDT at the position
@@ -50,11 +50,11 @@ A step is done when its values and their sources are in the log. If step 10 find
 One VEP call also returns the scores for steps 2 and 5. Use the MANE Select row.
 
 ```bash
-curl -s "https://rest.ensembl.org/vep/human/hgvs/TRANSCRIPT:c.VARIANT?mane=1&AlphaMissense=1&REVEL=1&CADD=1&SpliceAI=1" \
+curl -s "https://rest.ensembl.org/vep/human/hgvs/TRANSCRIPT:c.VARIANT?mane=1&vcf_string=1&AlphaMissense=1&REVEL=1&CADD=1&SpliceAI=1" \
   -H "Content-Type:application/json" | python3 -c "
 import sys, json
 for v in json.load(sys.stdin):
-    print(f'chr{v[\"seq_region_name\"]}:{v[\"start\"]} strand {v.get(\"strand\")} alleles {v.get(\"allele_string\")}')
+    print(f'chr{v[\"seq_region_name\"]}:{v[\"start\"]} strand {v.get(\"strand\")} transcript alleles {v.get(\"allele_string\")} genomic {v.get(\"vcf_string\")}')
     for c in v.get('transcript_consequences', []):
         if not c.get('mane_select'):
             continue
@@ -63,7 +63,9 @@ for v in json.load(sys.stdin):
               'CADD', c.get('cadd_phred'), 'SpliceAI', c.get('spliceai'))"
 ```
 
-For GRCh38 `chr-pos-ref-alt` input, use `https://rest.ensembl.org/vep/human/region/CHR:POS-POS:1/ALT` with the same parameters. VEP reports forward-strand alleles; use them for gnomAD. CADD's own API often answers "Not found", so take CADD from VEP.
+For GRCh38 `chr-pos-ref-alt` input, use `https://rest.ensembl.org/vep/human/region/CHR:POS-POS:1/ALT` with the same parameters. CADD's own API often answers "Not found", so take CADD from VEP.
+
+**Use `vcf_string` as the variant's genomic id** for gnomAD and AlphaGenome: it is GRCh38, forward strand, VCF-style with the anchor base for indels (`15-43600551-T-G`, `17-43124027-ACT-A`). For HGVS input, `allele_string` is on the transcript strand: on a minus-strand gene (`strand` -1) it is the complement of the genomic change, and a gnomAD lookup with it finds nothing and reads as absence. HBB c.20A>T is `allele_string` A/T but `vcf_string` 11-5227002-T-A (rs334, common in African-ancestry populations).
 
 PVS1 (a null variant: nonsense, frameshift, canonical ±1,2 splice, initiation codon, whole-exon deletion) applies only where loss of function is the gene's known disease mechanism. Set its strength with the ClinGen PVS1 decision tree (Abou Tayoun 2018): a truncation that escapes nonsense-mediated decay, in the last exon or the last 50 nt of the penultimate one, is weaker.
 
@@ -85,10 +87,12 @@ The full AlphaMissense table for the protein (`https://alphafold.ebi.ac.uk/files
 
 ```bash
 curl -s -X POST 'https://gnomad.broadinstitute.org/api' -H 'Content-Type:application/json' \
-  -d '{"query":"{variant(variantId:\"CHR-POS-REF-ALT\",dataset:gnomad_r4){genome{ac an af faf95{popmax popmax_population}} exome{ac an af faf95{popmax popmax_population}} flags}}"}'
+  -d '{"query":"{variant(variantId:\"VCF_STRING\",dataset:gnomad_r4){genome{ac an af filters faf95{popmax popmax_population}} exome{ac an af filters faf95{popmax popmax_population}} flags}}"}'
 ```
 
-- BA1: frequency above 5% in any continental population with at least 2,000 alleles, unless the gene has a ClinGen BA1 exception (Ghosh 2018). Use `faf95.popmax`, not the overall `af`, which can hide the population that crosses 5%. For BS1, use the gene's ClinGen expert panel threshold when one exists.
+`VCF_STRING` is the `vcf_string` from step 1, never the transcript-strand alleles.
+
+- BA1: frequency above 5% in any continental population with at least 2,000 alleles, unless the gene has a ClinGen BA1 exception (Ghosh 2018). Use `faf95.popmax`, not the overall `af`, which can hide the population that crosses 5%, and only from a callset whose `filters` list is empty: a filtered callset's frequency is not trusted. For BS1, use the gene's ClinGen expert panel threshold when one exists.
 - Absent gives PM2_Supporting (ClinGen downgraded PM2 to Supporting), but only once you have checked that gnomAD could have seen the variant:
   - coverage at the position is adequate (gnomAD browser coverage track). Low coverage is not absence.
   - the gene has no near-identical paralog or pseudogene: check `https://rest.ensembl.org/homology/symbol/human/GENE?type=paralogues;format=condensed`, the UCSC segmental-duplication track, and OMIM or the literature, since pseudogenes are often missing from the Ensembl list. Short reads from near-identical copies mismap, so absence there is weak evidence. STRC and its pseudogene STRCP1 are the standing example.
@@ -124,7 +128,7 @@ from alphagenome.data import genome
 
 load_dotenv(os.path.expanduser('~/.env'))  # an exported variable still wins
 model = dna_client.create(os.environ['ALPHAGENOME_API_KEY'])
-variant = genome.Variant(chromosome='chrN', position=POS, reference_bases='REF', alternate_bases='ALT')
+variant = genome.Variant(chromosome='chrN', position=POS, reference_bases='REF', alternate_bases='ALT')  # from vcf_string (step 1)
 interval = variant.reference_interval.resize(dna_client.SUPPORTED_SEQUENCE_LENGTHS['SEQUENCE_LENGTH_100KB'])
 scores = model.score_variant(interval=interval, variant=variant,
                              variant_scorers=list(variant_scorers.RECOMMENDED_VARIANT_SCORERS.values()))
@@ -211,9 +215,8 @@ Give the evidence table and the call log to a subagent that did not gather the e
 | Code | Level | Value | Source |
 |---|---|---|---|
 | PP3 | Supporting | REVEL 0.65 (≥0.644) | VEP REST, Ensembl 116, ENST00000450892 |
-| PM2 | Supporting | absent from gnomAD (0/251K); weak, because of the STRCP1 pseudogene | gnomAD |
 | PM3 | Moderate | in trans with a pathogenic 98 kb deletion | family data |
 
-Context, not counted: AlphaMissense 0.9016 (Supporting range); CADD 25.5 (Supporting range); pLDDT 95.69 at E1659; AlphaFold 3 pTM 0.63 wild type, 0.64 mutant; gnomAD pLI 0.14 and missense Z 7.62 (recessive and constrained, with the pseudogene caveat); E1659 sits in the AlphaMissense region with the most pathogenic-range scores (69%); conserved in 40 of 40 mammals (aligned OrthoDB); IUPred ordered; absent from ClinVar.
+Context, not counted: absent from gnomAD (15-43600551-T-G not found), but PM2 is not applied because reads from the near-identical STRCP1 pseudogene mismap, so absence is unreliable here; AlphaMissense 0.9016 (Supporting range); CADD 25.5 (Supporting range); pLDDT 95.69 at E1659; AlphaFold 3 pTM 0.63 wild type, 0.64 mutant; gnomAD pLI 0.14 and missense Z 7.62 (recessive and constrained, with the pseudogene caveat); E1659 sits in the AlphaMissense region with the most pathogenic-range scores (69%); conserved in 40 of 40 mammals (aligned OrthoDB); IUPred ordered; absent from ClinVar.
 
-Classification: VUS (1 Moderate + 2 Supporting meets no likely-pathogenic rule). The original analysis recorded REVEL 0.789 (PP3_Moderate) and CADD 27.5 from an unrecorded source; with those the class is still VUS. Scores differ between sources and releases, which is why every score is logged with its call and release.
+Classification: VUS (1 Moderate + 1 Supporting meets no likely-pathogenic rule). The original analysis recorded REVEL 0.789 (PP3_Moderate) and CADD 27.5 from an unrecorded source, and counted PM2_Supporting; with all of those (2 Moderate + 1 Supporting) the class is still VUS. Scores differ between sources and releases, which is why every score is logged with its call and release.
