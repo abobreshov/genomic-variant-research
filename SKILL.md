@@ -24,7 +24,7 @@ This is research support, not a clinical report. Say so in every output: a clini
 Steps 1-4, 7 and 8 need only `curl` and `python3` with network access. In addition:
 
 - Step 6 alignment: Biopython (`pip install biopython`), or Clustal Omega (`clustalo`, packaged as `clustal-omega`).
-- Step 5 AlphaGenome, optional: `pip install alphagenome` and an `ALPHAGENOME_API_KEY` from Google DeepMind.
+- Step 5 AlphaGenome, optional: `pip install alphagenome python-dotenv` and an `ALPHAGENOME_API_KEY` from Google DeepMind, set in the environment or in `~/.env` (the file DeepMind's own skills read). Never print the key.
 
 ## Checklist
 
@@ -118,9 +118,11 @@ AlphaGenome, optional; its training data has no inner-ear tissue:
 
 ```python
 import os
+from dotenv import load_dotenv
 from alphagenome.models import dna_client, variant_scorers
 from alphagenome.data import genome
 
+load_dotenv(os.path.expanduser('~/.env'))  # an exported variable still wins
 model = dna_client.create(os.environ['ALPHAGENOME_API_KEY'])
 variant = genome.Variant(chromosome='chrN', position=POS, reference_bases='REF', alternate_bases='ALT')
 interval = variant.reference_interval.resize(dna_client.SUPPORTED_SEQUENCE_LENGTHS['SEQUENCE_LENGTH_100KB'])
