@@ -21,10 +21,11 @@ This is research support, not a clinical report. Say so in every output: a clini
 
 ## Prerequisites
 
-Steps 1-4, 7 and 8 need only `curl` and `python3` with network access. In addition:
+`curl` and `python3` with network access, plus `uv` for the scripts:
 
-- Step 6 alignment: Biopython (`pip install biopython`), or Clustal Omega (`clustalo`, packaged as `clustal-omega`).
-- Step 5 AlphaGenome, optional: `pip install alphagenome python-dotenv` and an `ALPHAGENOME_API_KEY` from Google DeepMind, set in the environment or in `~/.env` (the file DeepMind's own skills read). Never print the key.
+- Steps 3, 5 and 6 run `uv run "${CLAUDE_SKILL_DIR}/scripts/…"` (the folder holding this file), which installs each script's pinned dependencies on first use. Run them from a working folder outside the skill, one at a time, because they write their `--output` file there and throttle to each service's rate limit. Without `uv`: `pip install polite_http==0.1.3 python-dotenv==1.2.4` (AVI also needs `pip install alphagenome anndata numpy pandas polars pyarrow tabulate`, versions in its header), then run them with `python3`. Their licence and each service's terms of use are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md); read it when a user asks about reuse or terms.
+- Step 5 AlphaGenome, optional: an `ALPHAGENOME_API_KEY` in the environment or `~/.env`, never printed. AVI needs Python 3.14, which `uv` fetches; live scoring needs `pip install alphagenome python-dotenv`.
+- Step 6 protein alignment: Biopython (`pip install biopython`), or Clustal Omega (`clustalo`).
 
 ## Checklist
 
@@ -33,10 +34,10 @@ Copy this and tick it off:
 ```text
 - [ ] 1 Coordinates: vcf_string, strand, MANE transcript, protein position from VEP; residue matches UniProt
 - [ ] 2 PP3/BP4: one predictor's level, tool named
-- [ ] 3 Frequency: gnomAD AF, or absence plus the coverage and paralog check; ClinVar entries
+- [ ] 3 Frequency: gnomAD AF and joint FAF, or absence plus the coverage and paralog check; ClinVar entries with review status
 - [ ] 4 Structure: pLDDT at the position
-- [ ] 5 Splicing: SpliceAI delta scores
-- [ ] 6 Conservation: aligned column across species
+- [ ] 5 Splicing: SpliceAI delta scores; AVI score as context when a key is set
+- [ ] 6 Conservation: phyloP at the base; aligned protein column across species
 - [ ] 7 Disorder: IUPred score at the position
 - [ ] 8 Clinical: ClinGen gene validity, OMIM inheritance, trials
 - [ ] 9 Evidence table filled from the template
@@ -47,10 +48,10 @@ A step is done when its values and their sources are in the log. If step 10 find
 
 ## Step 1: Coordinates and annotation
 
-One VEP call also returns the scores for steps 2 and 5. Use the MANE Select row.
+One VEP call also returns the scores for steps 2 and 5, the UniProt accession (`swissprot`, without its `.N` version) and the MANE RefSeq id (`mane_select`) that ClinVar uses. Use the MANE Select row.
 
 ```bash
-curl -s "https://rest.ensembl.org/vep/human/hgvs/TRANSCRIPT:c.VARIANT?mane=1&vcf_string=1&AlphaMissense=1&REVEL=1&CADD=1&SpliceAI=1" \
+curl -s "https://rest.ensembl.org/vep/human/hgvs/TRANSCRIPT:c.VARIANT?mane=1&vcf_string=1&uniprot=1&AlphaMissense=1&REVEL=1&CADD=1&SpliceAI=1" \
   -H "Content-Type:application/json" | python3 -c "
 import sys, json
 for v in json.load(sys.stdin):
@@ -58,7 +59,7 @@ for v in json.load(sys.stdin):
     for c in v.get('transcript_consequences', []):
         if not c.get('mane_select'):
             continue
-        print(c['transcript_id'], c.get('gene_symbol'), c['consequence_terms'], c.get('amino_acids'), c.get('protein_start'))
+        print(c['transcript_id'], c['mane_select'], c.get('gene_symbol'), c.get('swissprot'), c['consequence_terms'], c.get('amino_acids'), c.get('protein_start'))
         print('  REVEL', c.get('revel'), 'AM', c.get('alphamissense', {}).get('am_pathogenicity'),
               'CADD', c.get('cadd_phred'), 'SpliceAI', c.get('spliceai'))"
 ```
@@ -86,13 +87,18 @@ The full AlphaMissense table for the protein (`https://alphafold.ebi.ac.uk/files
 ## Step 3: Population frequency (BA1 / BS1 / PM2)
 
 ```bash
-curl -s -X POST 'https://gnomad.broadinstitute.org/api' -H 'Content-Type:application/json' \
-  -d '{"query":"{variant(variantId:\"VCF_STRING\",dataset:gnomad_r4){genome{ac an af filters faf95{popmax popmax_population}} exome{ac an af filters faf95{popmax popmax_population}} flags}}"}'
+uv run "${CLAUDE_SKILL_DIR}/scripts/gnomad_variant_frequency.py" --variant_id VCF_STRING --output gnomad_variant.json
 ```
 
-`VCF_STRING` is the `vcf_string` from step 1, never the transcript-strand alleles.
+`VCF_STRING` is the `vcf_string` from step 1, never the transcript-strand alleles. An absent variant comes back as `"Variant not found"` in `errors`.
 
-- BA1: frequency above 5% in any continental population with at least 2,000 alleles, unless the gene has a ClinGen BA1 exception (Ghosh 2018). Use `faf95.popmax`, not the overall `af`, which can hide the population that crosses 5%, and only from a callset whose `filters` list is empty: a filtered callset's frequency is not trusted. If every callset is filtered, record the filters and apply none of BA1, BS1 or PM2. For BS1, use the gene's ClinGen expert panel threshold when one exists.
+- BA1: frequency above 5% in any continental population with at least 2,000 alleles, unless the gene has a ClinGen BA1 exception (Ghosh 2018). Use a filtering allele frequency (`faf95.popmax`), never the overall `af`, which can hide the population that crosses 5%:
+  - `joint.faf95.popmax` when `joint.filters` is empty;
+  - otherwise, or when `joint` is null, the larger `faf95.popmax` of the exome and genome callsets whose `filters` are empty (a filtered callset's frequency is not trusted);
+  - in either case the population named in `popmax_population` must have AN ≥ 2,000 in that callset's `populations`.
+  - if every callset is filtered, record the filters and apply none of BA1, BS1 or PM2.
+
+  For BS1, use the gene's ClinGen expert panel threshold when one exists.
 - Absent gives PM2_Supporting (ClinGen downgraded PM2 to Supporting), but only once you have checked that gnomAD could have seen the variant:
   - coverage at the position is adequate (gnomAD browser coverage track). Low coverage is not absence.
   - the gene has no near-identical paralog or pseudogene: check `https://rest.ensembl.org/homology/symbol/human/GENE?type=paralogues;format=condensed`, the UCSC segmental-duplication track, and OMIM or the literature, since pseudogenes are often missing from the Ensembl list. Short reads from near-identical copies mismap, so absence there is weak evidence. STRC and its pseudogene STRCP1 are the standing example.
@@ -100,13 +106,19 @@ curl -s -X POST 'https://gnomad.broadinstitute.org/api' -H 'Content-Type:applica
 Gene constraint:
 
 ```bash
-curl -s -X POST 'https://gnomad.broadinstitute.org/api' -H 'Content-Type:application/json' \
-  -d '{"query":"{gene(gene_symbol:\"GENE\",reference_genome:GRCh38){gnomad_constraint{pli oe_lof oe_lof_upper oe_mis oe_mis_upper lof_z mis_z}}}"}'
+uv run "${CLAUDE_SKILL_DIR}/scripts/gnomad_gene_constraint.py" --gene GENE --output gnomad_constraint.json
 ```
 
-For a recessive gene a low pLI is expected, because one broken copy is tolerated; a high missense Z says missense changes are under selection. The paralog caveat above applies to constraint too.
+For a recessive gene a low pLI is expected, because one broken copy is tolerated; a high `mis_z` says missense changes are under selection. The paralog caveat above applies to constraint too.
 
-ClinVar: `curl -s "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=clinvar&term=GENE[gene]&retmode=json"`, then look for the variant's HGVS in the results.
+ClinVar: look the variant up by its exact name on the MANE RefSeq transcript from step 1, then read the classification and review status:
+
+```bash
+uv run "${CLAUDE_SKILL_DIR}/scripts/clinvar_api.py" search --query '"NM_ID.V:c.CHANGE"[vname]' --output clinvar_ids.json
+uv run "${CLAUDE_SKILL_DIR}/scripts/clinvar_api.py" summary --variant_ids ID ... --output clinvar_summary.json
+```
+
+If the name finds nothing, search a window of about ±5 bases (`'CHR[chr] AND START:END[chrpos38]'`, ascending), because indel positions differ between left-aligned VCF and right-aligned HGVS. Neighbouring variants appear in that window, so keep only an entry whose title names this variant's c. change; with none, the variant is absent from ClinVar. Record the review status with the classification, because a single submitter's claim weighs less than an expert panel's.
 
 ## Step 4: Protein structure
 
@@ -118,7 +130,13 @@ AlphaFold 3 (alphafoldserver.com) can fold the wild type and the mutant, but it 
 
 SpliceAI comes from the VEP call in step 1. Outside the canonical ±1,2 splice positions, a delta score of 0.2 or more supports PP3 for a splicing effect and 0.1 or less supports BP4 (ClinGen SVI splicing guidance, Walker 2023). Do not apply PP3 for both a missense and a splicing effect of the same variant. If VEP has no SpliceAI score, use https://spliceailookup.broadinstitute.org/ (its pip package fails to install on current Python).
 
-AlphaGenome, optional; its training data has no inner-ear tissue:
+AlphaGenome, optional; its training data has no inner-ear tissue. The precomputed AlphaGenome Variant Impact (AVI) score (1-based GRCh38, forward-strand alleles):
+
+```bash
+uv run "${CLAUDE_SKILL_DIR}/scripts/alphagenome_avi.py" query "chrCHR:POS:REF>ALT" --format json --output avi.json
+```
+
+Report `avi_phred`, `top_percentile` and `fi_MERGED_SPLICING` as context. AVI is not calibrated for ACMG, so it never sets PP3 or BP4; for a missense variant it mostly restates AlphaMissense. For track-level predictions, score the variant live:
 
 ```python
 import os
@@ -137,7 +155,15 @@ df = variant_scorers.tidy_scores(scores)
 
 ## Step 6: Conservation
 
-Fetch orthologs from UniProt (`https://rest.uniprot.org/uniprotkb/search?query=gene:GENE+AND+reviewed:true&format=fasta&size=20`) or OrthoDB (`https://data.orthodb.org/current/search?query=GENE&species=9606`, then `https://data.orthodb.org/current/fasta?id=GROUP_ID`).
+Base-level conservation from the UCSC 100-vertebrate alignment, with no alignment to build (1-based GRCh38 position):
+
+```bash
+uv run "${CLAUDE_SKILL_DIR}/scripts/ucsc_conservation.py" --coordinates chrCHR:POS --output conservation.json
+```
+
+Report `phyloP100way` and `phastCons100way` as context; like AVI, they never set PP3 or BP4. In a segmental duplication such as STRC's, the alignment can mix the copies, so read it with the paralog caveat from step 3.
+
+For protein-level conservation, fetch orthologs from UniProt (`https://rest.uniprot.org/uniprotkb/search?query=gene:GENE+AND+reviewed:true&format=fasta&size=20`) or OrthoDB (`https://data.orthodb.org/current/search?query=GENE&species=9606`, then `https://data.orthodb.org/current/fasta?id=GROUP_ID`).
 
 These sequences are **unaligned**. Indels shift positions, so residue N in one species is not residue N in another; reading position N straight from the raw FASTA once reported 3.8% conservation for a position conserved in all 40 mammals. Align a window around the variant to each sequence and read the aligned column:
 
@@ -206,7 +232,7 @@ Richards et al. 2015, with ClinGen SVI's PM2 change applied.
 Give the evidence table and the call log to a subagent that did not gather the evidence. It checks that:
 
 - every value matches its logged source;
-- each code is counted once: one PP3 tool, conservation not added to it, missense and splicing PP3 not both applied;
+- each code is counted once: one PP3 tool, conservation and AVI not added to it, missense and splicing PP3 not both applied;
 - PM2 is not applied where coverage or a paralog makes absence unreliable;
 - the classification follows the combining rules.
 
@@ -217,6 +243,6 @@ Give the evidence table and the call log to a subagent that did not gather the e
 | PP3 | Supporting | REVEL 0.65 (≥0.644) | VEP REST, Ensembl 116, ENST00000450892 |
 | PM3 | Moderate | in trans with a pathogenic 98 kb deletion | family data |
 
-Context, not counted: absent from gnomAD (15-43600551-T-G not found), but PM2 is not applied because reads from the near-identical STRCP1 pseudogene mismap, so absence is unreliable here; AlphaMissense 0.9016 (Supporting range); CADD 25.5 (Supporting range); pLDDT 95.69 at E1659; AlphaFold 3 pTM 0.63 wild type, 0.64 mutant; gnomAD pLI 0.14 and missense Z 7.62 (recessive and constrained, with the pseudogene caveat); E1659 sits in the AlphaMissense region with the most pathogenic-range scores (69%); conserved in 40 of 40 mammals (aligned OrthoDB); IUPred ordered; absent from ClinVar.
+Context, not counted: absent from gnomAD (15-43600551-T-G not found), but PM2 is not applied because reads from the near-identical STRCP1 pseudogene mismap, so absence is unreliable here; AlphaMissense 0.9016 (Supporting range); CADD 25.5 (Supporting range); pLDDT 95.69 at E1659; AlphaFold 3 pTM 0.63 wild type, 0.64 mutant; gnomAD pLI 0.14 and missense Z 7.62 (recessive and constrained, with the pseudogene caveat); E1659 sits in the AlphaMissense region with the most pathogenic-range scores (69%); conserved in 40 of 40 mammals (aligned OrthoDB); phyloP100way 5.75 and phastCons100way 1.0 at chr15:43600551; AVI Phred 26.7 (top 0.22% of SNVs, driven by AlphaMissense; splicing importance 0.03); IUPred ordered; not in ClinVar (no hit for `NM_153700.2:c.4976A>C`; the ±5-base window holds only p.Thr1658Ile and p.Ile1660Met).
 
 Classification: VUS (1 Moderate + 1 Supporting meets no likely-pathogenic rule). The original analysis recorded REVEL 0.789 (PP3_Moderate) and CADD 27.5 from an unrecorded source, and counted PM2_Supporting; with all of those (2 Moderate + 1 Supporting) the class is still VUS. Scores differ between sources and releases, which is why every score is logged with its call and release.

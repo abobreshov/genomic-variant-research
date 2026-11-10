@@ -43,18 +43,14 @@ All tools are free. No wet lab required. Total compute cost: ~$50-100 in LLM API
 
 ## Requirements
 
-See *Prerequisites* in `SKILL.md`.
+`curl`, `python3` and [`uv`](https://docs.astral.sh/uv/); details under *Prerequisites* in `SKILL.md`. The gnomAD, ClinVar, UCSC conservation and AlphaGenome AVI steps run scripts in `scripts/`, vendored from [DeepMind's science-skills](https://github.com/google-deepmind/science-skills). AVI needs an `ALPHAGENOME_API_KEY`.
 
 ## Install
 
-Copy `SKILL.md` into your agent's skills directory:
+Install the whole folder, since `SKILL.md` calls the scripts beside it:
 
 ```bash
 # For Claude Code / Hermes
-mkdir -p ~/.claude/skills/genomic-variant-research
-cp SKILL.md ~/.claude/skills/genomic-variant-research/SKILL.md
-
-# Or clone the whole repo
 git clone https://github.com/lyfar/genomic-variant-research.git ~/.claude/skills/genomic-variant-research
 ```
 
@@ -94,4 +90,4 @@ The full research is published at [strc.egor.lol](https://strc.egor.lol).
 
 ## License
 
-MIT. Use it, fork it, improve it. If you find a new pitfall, please open an issue or PR.
+MIT, except the vendored scripts in `scripts/`, which stay Apache-2.0 (`THIRD_PARTY_NOTICES.md`). Use it, fork it, improve it. If you find a new pitfall, please open an issue or PR.
