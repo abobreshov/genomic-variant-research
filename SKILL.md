@@ -63,7 +63,7 @@ for v in json.load(sys.stdin):
               'CADD', c.get('cadd_phred'), 'SpliceAI', c.get('spliceai'))"
 ```
 
-For GRCh38 `chr-pos-ref-alt` input, use `https://rest.ensembl.org/vep/human/region/CHR:POS-POS:1/ALT` with the same parameters. CADD's own API often answers "Not found", so take CADD from VEP.
+For GRCh38 `chr-pos-ref-alt` input, use `https://rest.ensembl.org/vep/human/region/CHR:POS-END:1/ALT` with the same parameters, where END = POS + length(REF) - 1: the span must cover the whole reference allele, or a deletion errors and a longer REF is scored as a different one-base change (`17-43124027-ACT-A` is `17:43124027-43124029:1/A`; an insertion such as `17-43124027-A-ACT` keeps `POS-POS`). Take the gnomAD id, the AlphaGenome alleles and the ClinVar window position from the `vcf_string` it returns. CADD's own API often answers "Not found", so take CADD from VEP.
 
 **Use `vcf_string` as the variant's genomic id** for gnomAD and AlphaGenome: it is GRCh38, forward strand, VCF-style with the anchor base for indels (`15-43600551-T-G`, `17-43124027-ACT-A`). For HGVS input, `allele_string` is on the transcript strand: on a minus-strand gene (`strand` -1) it is the complement of the genomic change, and a gnomAD lookup with it finds nothing and reads as absence. HBB c.20A>T is `allele_string` A/T but `vcf_string` 11-5227002-T-A (rs334, common in African-ancestry populations).
 
@@ -92,7 +92,7 @@ curl -s -X POST 'https://gnomad.broadinstitute.org/api' -H 'Content-Type:applica
 
 `VCF_STRING` is the `vcf_string` from step 1, never the transcript-strand alleles.
 
-- BA1: frequency above 5% in any continental population with at least 2,000 alleles, unless the gene has a ClinGen BA1 exception (Ghosh 2018). Use `faf95.popmax`, not the overall `af`, which can hide the population that crosses 5%, and only from a callset whose `filters` list is empty: a filtered callset's frequency is not trusted. For BS1, use the gene's ClinGen expert panel threshold when one exists.
+- BA1: frequency above 5% in any continental population with at least 2,000 alleles, unless the gene has a ClinGen BA1 exception (Ghosh 2018). Use `faf95.popmax`, not the overall `af`, which can hide the population that crosses 5%, and only from a callset whose `filters` list is empty: a filtered callset's frequency is not trusted. If every callset is filtered, record the filters and apply none of BA1, BS1 or PM2. For BS1, use the gene's ClinGen expert panel threshold when one exists.
 - Absent gives PM2_Supporting (ClinGen downgraded PM2 to Supporting), but only once you have checked that gnomAD could have seen the variant:
   - coverage at the position is adequate (gnomAD browser coverage track). Low coverage is not absence.
   - the gene has no near-identical paralog or pseudogene: check `https://rest.ensembl.org/homology/symbol/human/GENE?type=paralogues;format=condensed`, the UCSC segmental-duplication track, and OMIM or the literature, since pseudogenes are often missing from the Ensembl list. Short reads from near-identical copies mismap, so absence there is weak evidence. STRC and its pseudogene STRCP1 are the standing example.
